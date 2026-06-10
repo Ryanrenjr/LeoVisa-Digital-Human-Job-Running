@@ -1,0 +1,62 @@
+# ── Jobs (runtime data) ──
+jobs/
+
+# ── Background video assets (large binaries) ──
+assets/backgrounds/*.mp4
+assets/backgrounds/custom/
+assets/backgrounds/thumbnails/
+
+# ── Logs ──
+logs/
+*.log
+
+# ── Runtime working directories ──
+DigitalHumanInput/
+DigitalHumanOutput/
+
+# ── Large media assets (too large for GitHub) ──
+VideoRefs/
+AudioAssets/
+AudioAssetsRaw/
+VoiceRefs/
+BrandAssets/
+backups/
+
+# ── External ML projects (checked out separately) ──
+projects/
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── Node / Frontend ──
+app/frontend/node_modules/
+app/frontend/dist/
+app/frontend/.env
+app/frontend/.env.local
+app/frontend/.vite/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Secrets ──
+.env
+*.env
+secrets/

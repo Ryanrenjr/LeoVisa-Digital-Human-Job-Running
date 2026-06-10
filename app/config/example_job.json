@@ -1,0 +1,39 @@
+{
+  "job_id": "20260609_153012_test_ilr",
+  "status": "pending",
+  "title": "永居改革没落地",
+  "subtitle": "没落地，不等于不来了",
+  "keywords": ["永居改革", "五年永居", "十年永居", "ILR", "李尔王"],
+  "script": "永居改革，到今天还没落地。很多人觉得，那可以松口气了。但李尔王想跟你说：没落地，不等于不来了。安全感，要靠自己的时间线，不是靠等一条新闻。我是李尔王，我们下期见。",
+  "background_id": "boss_03",
+  "voice_id": "boss_voxcpm2_lora",
+  "output_type": "clean_video",
+  "shutdown_after_done": false,
+  "created_at": "2026-06-09T15:30:12",
+  "started_at": null,
+  "finished_at": null,
+  "error_message": null,
+  "progress": {
+    "stage": "pending",
+    "current_window": 0,
+    "total_windows": 0,
+    "percent": 0,
+    "message": "Waiting to start"
+  },
+  "paths": {
+    "job_dir": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr",
+    "input_dir": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/input",
+    "output_dir": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/output",
+    "log_dir": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/logs",
+    "title_txt": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/input/title.txt",
+    "subtitle_txt": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/input/subtitle.txt",
+    "keywords_txt": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/input/keywords.txt",
+    "script_txt": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/input/script.txt",
+    "voice_wav": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/output/voice.wav",
+    "voice_for_latentsync_wav": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/output/voice_for_latentsync.wav",
+    "clean_video": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/output/clean_video.mp4",
+    "final_video": null,
+    "run_log": "/home/ryanrenjr/AI-Workspace/jobs/20260609_153012_test_ilr/logs/run.log",
+    "windows_desktop_output": "C:\\Users\\rjxxx\\Desktop\\DigitalHumanOutput\\20260609_153012_test_ilr_clean_video.mp4"
+  }
+}

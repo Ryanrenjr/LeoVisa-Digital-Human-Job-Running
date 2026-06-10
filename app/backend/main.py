@@ -1,0 +1,331 @@
+import logging
+import shutil
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
+from background_utils import (
+    CUSTOM_DIR,
+    THUMBNAILS_DIR,
+    generate_thumbnail,
+    get_background_by_id,
+    load_backgrounds,
+    make_background_id,
+    save_backgrounds,
+)
+from job_store import create_job, list_jobs, load_job, save_job
+from progress_utils import get_cleanvideo_progress
+from runner import check_no_other_running_job, is_job_process_running, start_job
+from schemas import HealthResponse, JobCreateRequest, JobRunResponse
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+AI_WORKSPACE = Path("/home/ryanrenjr/AI-Workspace")
+
+app = FastAPI(title="LeoVisa Digital Human Job Runner", version="0.1.3")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def _with_live_progress(job: dict) -> dict:
+    if job.get("status") != "running":
+        return job
+    live = get_cleanvideo_progress(job["job_id"])
+    if not live:
+        return job
+    job = dict(job)
+    job["progress"] = live
+    return job
+
+
+def _with_artifacts(job: dict) -> dict:
+    job_id = job.get("job_id", "")
+    clean_video_path = job.get("paths", {}).get("clean_video", "")
+    exists = bool(clean_video_path and Path(clean_video_path).exists())
+    job = dict(job)
+    job["artifacts"] = {
+        "clean_video_exists": exists,
+        "download_url": f"/jobs/{job_id}/download" if exists else None,
+        "preview_url":  f"/jobs/{job_id}/download" if exists else None,
+    }
+    return job
+
+
+# ============================================================ HEALTH
+@app.get("/health", response_model=HealthResponse)
+def health():
+    return HealthResponse(
+        status="ok",
+        service="LeoVisa Digital Human Job Runner",
+        version="0.1.3",
+    )
+
+
+# ============================================================ BACKGROUNDS
+
+@app.get("/backgrounds")
+def get_backgrounds():
+    return load_backgrounds()
+
+
+@app.post("/backgrounds/upload")
+async def upload_background(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Only .mp4 files are supported.")
+
+    bg_id    = make_background_id(file.filename)
+    dst_path = CUSTOM_DIR / f"{bg_id}.mp4"
+
+    try:
+        content = await file.read()
+        dst_path.write_bytes(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    bg = {
+        "id":             bg_id,
+        "name":           Path(file.filename).stem,
+        "path":           str(dst_path),
+        "description":    f"Custom upload {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "type":           "custom",
+        "thumbnail_path": str(THUMBNAILS_DIR / f"{bg_id}.jpg"),
+        "preview_url":    f"/backgrounds/{bg_id}/preview",
+        "thumbnail_url":  f"/backgrounds/{bg_id}/thumbnail",
+    }
+
+    bgs = load_backgrounds()
+    bgs.append(bg)
+    save_backgrounds(bgs)
+    generate_thumbnail(bg)   # non-fatal
+
+    logger.info("Uploaded background %s (%d bytes)", bg_id, len(content))
+    return bg
+
+
+@app.get("/backgrounds/{background_id}/thumbnail")
+def get_background_thumbnail(background_id: str):
+    bg = get_background_by_id(background_id)
+    if bg is None:
+        raise HTTPException(status_code=404, detail=f"Background not found: {background_id}")
+
+    thumb_path = Path(bg.get("thumbnail_path", ""))
+    if not thumb_path.exists():
+        generate_thumbnail(bg)
+
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail not available.")
+
+    return FileResponse(path=str(thumb_path), media_type="image/jpeg")
+
+
+@app.get("/backgrounds/{background_id}/preview")
+def get_background_preview(background_id: str):
+    bg = get_background_by_id(background_id)
+    if bg is None:
+        raise HTTPException(status_code=404, detail=f"Background not found: {background_id}")
+
+    mp4_path = Path(bg.get("path", ""))
+    if not mp4_path.exists():
+        raise HTTPException(status_code=404, detail="Background video file not found.")
+
+    return FileResponse(path=str(mp4_path), media_type="video/mp4")
+
+
+@app.delete("/backgrounds/{background_id}")
+def delete_background(background_id: str):
+    bg = get_background_by_id(background_id)
+    if bg is None:
+        raise HTTPException(status_code=404, detail=f"Background not found: {background_id}")
+
+    if bg.get("type") == "builtin":
+        raise HTTPException(status_code=400, detail="Built-in backgrounds cannot be deleted.")
+
+    # Refuse deletion if any job is currently running
+    for job in list_jobs():
+        if job.get("status") == "running" and is_job_process_running(job["job_id"]):
+            raise HTTPException(
+                status_code=409,
+                detail="A job is currently running. Stop it before deleting backgrounds.",
+            )
+
+    mp4_path   = Path(bg.get("path", ""))
+    thumb_path = Path(bg.get("thumbnail_path", ""))
+    mp4_path.unlink(missing_ok=True)
+    thumb_path.unlink(missing_ok=True)
+
+    bgs = [b for b in load_backgrounds() if b.get("id") != background_id]
+    save_backgrounds(bgs)
+
+    logger.info("Deleted background %s", background_id)
+    return {"success": True, "id": background_id}
+
+
+# ============================================================ JOBS
+
+@app.post("/jobs")
+def create_job_endpoint(req: JobCreateRequest):
+    if req.output_type != "clean_video":
+        raise HTTPException(
+            status_code=400,
+            detail=f"output_type '{req.output_type}' is not supported. Only clean_video is implemented in V1.",
+        )
+    try:
+        job = create_job(req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create job: {e}")
+    return job
+
+
+@app.get("/jobs")
+def get_jobs():
+    return [_with_artifacts(_with_live_progress(j)) for j in list_jobs()]
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return _with_artifacts(_with_live_progress(job))
+
+
+@app.post("/jobs/{job_id}/run", response_model=JobRunResponse)
+def run_job(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    status = job.get("status")
+    if status == "running":
+        raise HTTPException(status_code=400, detail=f"Job {job_id} is already running.")
+    if status == "finished":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job {job_id} is already finished. Reset the job to run again.",
+        )
+
+    running_other = check_no_other_running_job(job_id)
+    if running_other:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Another job is already running: {running_other}.",
+        )
+
+    try:
+        pid = start_job(job_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start job: {e}")
+
+    logger.info("Started job %s with PID %d", job_id, pid)
+    return JobRunResponse(message="Job started", job_id=job_id, pid=pid)
+
+
+@app.get("/jobs/{job_id}/log")
+def get_job_log(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    run_log  = job.get("paths", {}).get("run_log", "")
+    log_path = Path(run_log) if run_log else None
+
+    if not log_path or not log_path.exists():
+        return {"job_id": job_id, "log": "", "lines": 0}
+
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail  = lines[-200:]
+    return {"job_id": job_id, "log": "\n".join(tail), "lines": len(tail)}
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job_endpoint(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if job.get("status") == "running" and is_job_process_running(job_id):
+        raise HTTPException(status_code=409, detail="Cannot delete a running job. Cancel it first.")
+
+    job_dir = AI_WORKSPACE / "jobs" / job_id
+    shutil.rmtree(job_dir, ignore_errors=True)
+    logger.info("Deleted job %s", job_id)
+    return {"success": True, "job_id": job_id}
+
+
+@app.get("/jobs/{job_id}/download")
+def download_job(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    clean_video = job.get("paths", {}).get("clean_video", "")
+    if not clean_video or not Path(clean_video).exists():
+        raise HTTPException(status_code=404, detail="clean_video.mp4 not found for this job.")
+
+    return FileResponse(path=clean_video, media_type="video/mp4")
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    status = job.get("status")
+    if status == "finished":
+        raise HTTPException(status_code=400, detail="Cannot cancel a finished job.")
+    if status == "running" and is_job_process_running(job_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Job appears to be actively running. Stop process manually before cancelling.",
+        )
+
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    job["status"]        = "cancelled"
+    job["finished_at"]   = now
+    job["error_message"] = "Cancelled by user."
+    job.setdefault("progress", {})
+    job["progress"]["stage"]   = "cancelled"
+    job["progress"]["message"] = "Cancelled by user."
+    save_job(job)
+    logger.info("Cancelled job %s (was: %s)", job_id, status)
+    return job
+
+
+@app.post("/jobs/{job_id}/reset")
+def reset_job(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    status = job.get("status")
+    if status == "finished":
+        raise HTTPException(status_code=400, detail="Cannot reset a finished job.")
+    if status == "running" and is_job_process_running(job_id):
+        raise HTTPException(status_code=409, detail="Job appears to be actively running. Cannot reset.")
+    if status == "pending":
+        return job
+
+    job["status"]       = "pending"
+    job["started_at"]   = None
+    job["finished_at"]  = None
+    job["error_message"]= None
+    job.setdefault("progress", {})
+    job["progress"]["stage"]          = "pending"
+    job["progress"]["current_window"] = 0
+    job["progress"]["total_windows"]  = 0
+    job["progress"]["percent"]        = 0
+    job["progress"]["message"]        = "Reset to pending"
+    save_job(job)
+    logger.info("Reset job %s to pending (was: %s)", job_id, status)
+    return job

@@ -397,6 +397,25 @@ def reset_job(job_id: str):
 
 # ============================================================ SCRIPT ASSISTANT
 
+@app.get("/script/health")
+async def script_health(model: str = "qwen2.5:7b"):
+    result = await script_assistant.check_health(model)
+    msg_raw = result.get("message", "")
+
+    if msg_raw == "ollama_not_running":
+        result["user_message"] = "Ollama is not running. Please start Ollama first."
+        result["user_message_zh"] = "Ollama 未启动，请先启动 Ollama。"
+    elif msg_raw.startswith("model_not_found:"):
+        m = msg_raw.split(":", 1)[1]
+        result["user_message"] = f"Model not found. Run: ollama pull {m}"
+        result["user_message_zh"] = f"模型未找到，请先运行：ollama pull {m}"
+    elif msg_raw == "ready":
+        result["user_message"] = "AI is ready"
+        result["user_message_zh"] = "AI 可以使用"
+
+    return result
+
+
 @app.post("/script/format")
 async def format_script(req: ScriptFormatRequest):
     try:
@@ -406,17 +425,31 @@ async def format_script(req: ScriptFormatRequest):
         )
         return result
     except ValueError as exc:
-        msg = str(exc)
-        if msg == "ollama_not_running":
+        code = str(exc)
+        if code == "ollama_not_running":
             raise HTTPException(
                 status_code=503,
-                detail="Ollama is not running. Please start Ollama first.",
+                detail={
+                    "code": "OLLAMA_NOT_RUNNING",
+                    "message": "Ollama is not running. Please start Ollama first.",
+                },
             )
-        if msg == "model_not_found":
+        if code.startswith("model_not_found:"):
+            m = code.split(":", 1)[1]
             raise HTTPException(
                 status_code=404,
-                detail=f"Model not found. Please run: ollama pull {req.model}",
+                detail={
+                    "code": "MODEL_NOT_FOUND",
+                    "message": f"Model not found. Run: ollama pull {m}",
+                    "model": m,
+                },
             )
-        raise HTTPException(status_code=500, detail=f"AI formatting failed: {msg}")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AI_ERROR", "message": f"AI formatting failed: {code}"},
+        )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AI_ERROR", "message": f"Unexpected error: {exc}"},
+        )

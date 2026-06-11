@@ -54,4 +54,5 @@ export const runNextJob                = ()        => request('POST', '/queue/ru
 export const setQueueShutdownOnComplete= (enabled) => request('POST', '/queue/shutdown-after-complete', { enabled })
 
 // AI Script Assistant
-export const formatScript = (payload) => request('POST', '/script/format', payload)
+export const formatScript      = (payload) => request('POST', '/script/format', payload)
+export const checkScriptHealth = (model)   => request('GET',  `/script/health?model=${encodeURIComponent(model)}`)

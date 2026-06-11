@@ -33,6 +33,13 @@ _SYSTEM = (
 )
 
 
+def _read_http_error(exc) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def _call_ollama(model: str, raw_text: str) -> dict:
     payload = json.dumps(
         {
@@ -58,11 +65,12 @@ def _call_ollama(model: str, raw_text: str) -> dict:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 404 or "not found" in body.lower():
-            raise ValueError("model_not_found")
-        raise ValueError(f"ollama_http_{exc.code}: {body[:200]}")
-    except urllib.error.URLError:
+        body = _read_http_error(exc)
+        # Ollama 404 = model not found; also check body for explicit message
+        if exc.code == 404 or "not found" in body.lower() or "model" in body.lower():
+            raise ValueError(f"model_not_found:{model}")
+        raise ValueError(f"ollama_http_{exc.code}")
+    except (urllib.error.URLError, OSError, ConnectionRefusedError):
         raise ValueError("ollama_not_running")
 
     content = data.get("message", {}).get("content", "")
@@ -84,6 +92,52 @@ def _call_ollama(model: str, raw_text: str) -> dict:
             pass
 
     raise ValueError(f"Cannot parse Ollama response as JSON: {content[:300]}")
+
+
+def _check_health_sync(model: str) -> dict:
+    """Check Ollama reachability and model availability."""
+    req = urllib.request.Request(f"{OLLAMA_BASE}/api/tags", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ConnectionRefusedError):
+        return {
+            "ok": False,
+            "ollama_running": False,
+            "model_found": False,
+            "model": model,
+            "available_models": [],
+            "message": "ollama_not_running",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "ollama_running": False,
+            "model_found": False,
+            "model": model,
+            "available_models": [],
+            "message": f"ollama_error:{exc}",
+        }
+
+    available = [m.get("name", "") for m in data.get("models", [])]
+    found = model in available
+    # Fallback: match by base name if no tag specified
+    if not found and ":" not in model:
+        found = any(m.startswith(model) for m in available)
+
+    return {
+        "ok": found,
+        "ollama_running": True,
+        "model_found": found,
+        "model": model,
+        "available_models": available,
+        "message": "ready" if found else f"model_not_found:{model}",
+    }
+
+
+async def check_health(model: str) -> dict:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _check_health_sync, model)
 
 
 async def format_script(raw_text: str, model: str = DEFAULT_MODEL) -> dict:

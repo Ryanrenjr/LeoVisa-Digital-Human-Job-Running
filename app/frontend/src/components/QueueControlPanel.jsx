@@ -7,9 +7,22 @@ export function QueueControlPanel({
   onToggleShutdown,
   t,
 }) {
-  if (!status) return null
+  // Always render a shell — never invisible
+  if (!status) {
+    return (
+      <div className="qcp">
+        <div className="qcp-header">
+          <span className="qcp-title">{t.queue.controlPanel}</span>
+          <span className="qcp-status-badge qcp-s-idle">…</span>
+        </div>
+        <div className="qcp-offline-hint">
+          {t.header.backendChecking}
+        </div>
+      </div>
+    )
+  }
 
-  const qs = status.status  // 'idle' | 'running' | 'paused' | 'completed'
+  const qs = status.status   // 'idle' | 'running' | 'paused' | 'completed'
 
   const statusLabel = {
     idle:      t.queue.idleStatus,
@@ -26,12 +39,12 @@ export function QueueControlPanel({
         <span className={`qcp-status-badge qcp-s-${qs}`}>{statusLabel}</span>
       </div>
 
-      {/* Auto-run toggle row */}
+      {/* Auto-run toggle */}
       <div className="qcp-autorun-row">
         <label className="qcp-toggle-label">
           <input
             type="checkbox"
-            checked={status.auto_run}
+            checked={!!status.auto_run}
             onChange={e => onToggleAutoRun(e.target.checked)}
           />
           <span className="qcp-toggle-text">{t.queue.autoRun}</span>
@@ -41,15 +54,27 @@ export function QueueControlPanel({
         )}
       </div>
 
-      {/* Counts row */}
+      {/* Counts */}
       <div className="qcp-counts">
-        {status.running_count  > 0 && <span className="qcp-count c-running">{status.running_count} {t.queue.running}</span>}
-        {status.pending_count  > 0 && <span className="qcp-count c-pending">{status.pending_count} {t.queue.pending}</span>}
-        {status.finished_count > 0 && <span className="qcp-count c-finished">{status.finished_count} done</span>}
-        {status.failed_count   > 0 && <span className="qcp-count c-failed">{status.failed_count} failed</span>}
+        {status.running_count  > 0 && (
+          <span className="qcp-count c-running">{status.running_count} {t.queue.running}</span>
+        )}
+        {status.pending_count  > 0 && (
+          <span className="qcp-count c-pending">{status.pending_count} {t.queue.pending}</span>
+        )}
+        {status.finished_count > 0 && (
+          <span className="qcp-count c-finished">{status.finished_count} {t.queue.completedStatus}</span>
+        )}
+        {status.failed_count   > 0 && (
+          <span className="qcp-count c-failed">{status.failed_count} {t.queue.failedStatus}</span>
+        )}
+        {(status.pending_count === 0 && status.running_count === 0 &&
+          status.finished_count === 0 && status.failed_count === 0) && (
+          <span className="qcp-count c-pending">{t.queue.noJobs}</span>
+        )}
       </div>
 
-      {/* Current job */}
+      {/* Current running job */}
       {status.current_job_id && (
         <div className="qcp-current">
           <span className="qcp-current-label">{t.queue.currentJob}:</span>
@@ -80,7 +105,7 @@ export function QueueControlPanel({
         <label className="qcp-toggle-label qcp-shutdown-toggle">
           <input
             type="checkbox"
-            checked={status.shutdown_after_complete}
+            checked={!!status.shutdown_after_complete}
             onChange={e => onToggleShutdown(e.target.checked)}
           />
           <span className="qcp-toggle-text">{t.queue.stopAfterComplete}</span>

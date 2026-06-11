@@ -149,10 +149,16 @@ export default function App() {
           await api.runJob(job.job_id)
           showBanner('success', `${t.messages.jobStarted}: ${job.job_id}`)
         } catch (e) {
-          const msg = e.status === 409
-            ? t.messages.createdButConflict
-            : `${t.messages.jobCreated}, but could not start: ${e.detail}`
-          showBanner('error', msg)
+          if (e.status === 409) {
+            // Another job is running — message depends on auto-run state
+            const autoOn = queueStatus?.auto_run
+            showBanner(
+              autoOn ? 'success' : 'error',
+              autoOn ? t.messages.jobQueuedAutoRun : t.messages.jobCreatedAutoRunOff,
+            )
+          } else {
+            showBanner('error', `${t.messages.jobCreated}, but could not start: ${e.detail}`)
+          }
         }
       } else {
         showBanner('success', `${t.messages.jobCreated}: ${job.job_id}`)

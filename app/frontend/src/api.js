@@ -44,3 +44,14 @@ export const uploadBackground = async (file) => {
   }
   return data
 }
+
+// Queue control
+export const getQueueStatus            = ()        => request('GET',  '/queue/status')
+export const setQueueAutoRun           = (enabled) => request('POST', '/queue/auto-run',              { enabled })
+export const pauseQueue                = ()        => request('POST', '/queue/pause')
+export const resumeQueue               = ()        => request('POST', '/queue/resume')
+export const runNextJob                = ()        => request('POST', '/queue/run-next')
+export const setQueueShutdownOnComplete= (enabled) => request('POST', '/queue/shutdown-after-complete', { enabled })
+
+// AI Script Assistant
+export const formatScript = (payload) => request('POST', '/script/format', payload)

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Header }        from './components/Header'
-import { CreateJobForm } from './components/CreateJobForm'
-import { HowToUse }      from './components/HowToUse'
-import { JobQueue }      from './components/JobQueue'
-import { JobDetail }     from './components/JobDetail'
-import { translations }  from './translations'
+import { Header }             from './components/Header'
+import { CreateJobForm }      from './components/CreateJobForm'
+import { HowToUse }           from './components/HowToUse'
+import { JobQueue }           from './components/JobQueue'
+import { JobDetail }          from './components/JobDetail'
+import { QueueControlPanel }  from './components/QueueControlPanel'
+import { translations }       from './translations'
 import * as api from './api'
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const [banner,              setBanner]              = useState(null)
   const [isSubmitting,        setIsSubmitting]        = useState(false)
   const [uploadingBackground, setUploadingBackground] = useState(false)
+  const [queueStatus,         setQueueStatus]         = useState(null)
   const [language,            setLanguage]            = useState(
     () => localStorage.getItem('leovisa_language') || 'en'
   )
@@ -44,6 +46,11 @@ export default function App() {
     catch (e) { console.warn('jobs:', e) }
   }, [])
 
+  const loadQueueStatus = useCallback(async () => {
+    try   { setQueueStatus(await api.getQueueStatus()) }
+    catch (e) { console.warn('queue status:', e) }
+  }, [])
+
   const loadJobLog = useCallback(async (jobId) => {
     try   { const d = await api.getJobLog(jobId); setJobLog(d.log) }
     catch (e) { console.warn('log:', e) }
@@ -60,9 +67,10 @@ export default function App() {
 
   useEffect(() => {
     loadJobs()
-    const timer = setInterval(loadJobs, 5_000)
+    loadQueueStatus()
+    const timer = setInterval(() => { loadJobs(); loadQueueStatus() }, 5_000)
     return () => clearInterval(timer)
-  }, [loadJobs])
+  }, [loadJobs, loadQueueStatus])
 
   useEffect(() => {
     if (!selectedJobId) { setJobLog(null); return }
@@ -102,6 +110,32 @@ export default function App() {
     } catch (e) {
       showBanner('error', e.detail || t.backgrounds.deleteBuiltinError)
     }
+  }
+
+  // ---- Queue handlers ----
+  const handleToggleAutoRun = async (enabled) => {
+    try   { setQueueStatus(await api.setQueueAutoRun(enabled)) }
+    catch (e) { console.warn('auto-run:', e) }
+  }
+
+  const handlePauseQueue = async () => {
+    try   { setQueueStatus(await api.pauseQueue()) }
+    catch (e) { console.warn('pause:', e) }
+  }
+
+  const handleResumeQueue = async () => {
+    try   { setQueueStatus(await api.resumeQueue()); await loadJobs() }
+    catch (e) { console.warn('resume:', e) }
+  }
+
+  const handleRunNext = async () => {
+    try   { setQueueStatus(await api.runNextJob()); await loadJobs() }
+    catch (e) { showBanner('error', e.detail || t.messages.anotherRunning) }
+  }
+
+  const handleToggleShutdown = async (enabled) => {
+    try   { setQueueStatus(await api.setQueueShutdownOnComplete(enabled)) }
+    catch (e) { console.warn('shutdown toggle:', e) }
   }
 
   // ---- Job handlers ----
@@ -223,6 +257,15 @@ export default function App() {
         </div>
 
         <div className="right-panel">
+          <QueueControlPanel
+            status={queueStatus}
+            onToggleAutoRun={handleToggleAutoRun}
+            onPause={handlePauseQueue}
+            onResume={handleResumeQueue}
+            onRunNext={handleRunNext}
+            onToggleShutdown={handleToggleShutdown}
+            t={t}
+          />
           <JobQueue
             jobs={jobs}
             selectedJobId={selectedJobId}

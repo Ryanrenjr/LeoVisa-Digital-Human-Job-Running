@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import * as api from '../api'
 
 function BgCard({ bg, selected, onSelect, onDelete, t }) {
@@ -47,6 +47,7 @@ function BgCard({ bg, selected, onSelect, onDelete, t }) {
 
 export function BackgroundPicker({ backgrounds, selectedId, onSelect, onDelete, onUpload, uploading, t }) {
   const fileRef = useRef(null)
+  const [showReqs, setShowReqs] = useState(false)
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0]
@@ -59,6 +60,13 @@ export function BackgroundPicker({ backgrounds, selectedId, onSelect, onDelete, 
     <div className="bg-picker">
       <div className="bg-picker-header">
         <span className="bg-picker-title">{t.backgrounds.library}</span>
+        <button
+          className={`btn btn-ghost btn-xs bg-req-toggle${showReqs ? ' active' : ''}`}
+          onClick={() => setShowReqs(v => !v)}
+          title={t.backgrounds.requirementsTitle}
+        >
+          ℹ
+        </button>
         <button
           className="btn btn-ghost btn-xs"
           onClick={() => fileRef.current?.click()}
@@ -74,6 +82,17 @@ export function BackgroundPicker({ backgrounds, selectedId, onSelect, onDelete, 
           onChange={handleFileChange}
         />
       </div>
+
+      {showReqs && (
+        <div className="bg-requirements">
+          <div className="bg-req-title">{t.backgrounds.requirementsTitle}</div>
+          <ol className="bg-req-list">
+            {t.backgrounds.requirements.map((req, i) => (
+              <li key={i}>{req}</li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {backgrounds.length === 0 ? (
         <div className="bg-grid-empty">—</div>

@@ -75,6 +75,8 @@ def _build_paths(job_id: str) -> dict:
         "final_video": None,
         "run_log": str(job_dir / "logs/run.log"),
         "windows_desktop_output": f"{WINDOWS_DESKTOP_MOUNT}/{job_id}_clean_video.mp4",
+        "subtitle_lines_txt": str(job_dir / "output/subtitle_lines.txt"),
+        "script_meta_json": str(job_dir / "output/script_meta.json"),
     }
 
 
@@ -117,4 +119,25 @@ def create_job(req: JobCreateRequest) -> dict:
     }
 
     save_job(job)
+
+    # Optional: save AI-generated subtitle lines
+    if req.subtitle_lines:
+        p = Path(job["paths"]["subtitle_lines_txt"])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(req.subtitle_lines), encoding="utf-8")
+
+    # Optional: save AI script metadata
+    if req.script_source == "ollama":
+        meta = {
+            "title":        req.title,
+            "subtitle":     req.subtitle,
+            "keywords":     _normalize_keywords(req.keywords),
+            "opening_hook": req.opening_hook or "",
+            "source":       req.script_source or "manual",
+            "model":        req.script_model  or "",
+        }
+        p = Path(job["paths"]["script_meta_json"])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
     return job

@@ -1,5 +1,6 @@
 import logging
 import shutil
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -18,15 +19,33 @@ from background_utils import (
 )
 from job_store import create_job, list_jobs, load_job, save_job
 from progress_utils import get_cleanvideo_progress
+from queue_runner import queue_runner
 from runner import check_no_other_running_job, is_job_process_running, start_job
-from schemas import HealthResponse, JobCreateRequest, JobRunResponse
+from schemas import (
+    HealthResponse,
+    JobCreateRequest,
+    JobRunResponse,
+    QueueAutoRunRequest,
+    QueueShutdownRequest,
+    ScriptFormatRequest,
+)
+import script_assistant
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 AI_WORKSPACE = Path("/home/ryanrenjr/AI-Workspace")
 
-app = FastAPI(title="LeoVisa Digital Human Job Runner", version="0.1.3")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    queue_runner.recover_stale_jobs()
+    queue_runner.start_worker()
+    yield
+    queue_runner.stop_worker()
+
+
+app = FastAPI(title="LeoVisa Digital Human Job Runner", version="0.1.4", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,25 +68,29 @@ def _with_live_progress(job: dict) -> dict:
 
 
 def _with_artifacts(job: dict) -> dict:
-    job_id = job.get("job_id", "")
-    clean_video_path = job.get("paths", {}).get("clean_video", "")
-    exists = bool(clean_video_path and Path(clean_video_path).exists())
+    job_id          = job.get("job_id", "")
+    clean_video     = job.get("paths", {}).get("clean_video", "")
+    subtitle_lines  = job.get("paths", {}).get("subtitle_lines_txt", "")
+    cv_exists       = bool(clean_video    and Path(clean_video).exists())
+    sl_exists       = bool(subtitle_lines and Path(subtitle_lines).exists())
     job = dict(job)
     job["artifacts"] = {
-        "clean_video_exists": exists,
-        "download_url": f"/jobs/{job_id}/download" if exists else None,
-        "preview_url":  f"/jobs/{job_id}/download" if exists else None,
+        "clean_video_exists":    cv_exists,
+        "subtitle_lines_exists": sl_exists,
+        "download_url":  f"/jobs/{job_id}/download" if cv_exists else None,
+        "preview_url":   f"/jobs/{job_id}/download" if cv_exists else None,
     }
     return job
 
 
 # ============================================================ HEALTH
+
 @app.get("/health", response_model=HealthResponse)
 def health():
     return HealthResponse(
         status="ok",
         service="LeoVisa Digital Human Job Runner",
-        version="0.1.3",
+        version="0.1.4",
     )
 
 
@@ -106,7 +129,7 @@ async def upload_background(file: UploadFile = File(...)):
     bgs = load_backgrounds()
     bgs.append(bg)
     save_backgrounds(bgs)
-    generate_thumbnail(bg)   # non-fatal
+    generate_thumbnail(bg)
 
     logger.info("Uploaded background %s (%d bytes)", bg_id, len(content))
     return bg
@@ -150,7 +173,6 @@ def delete_background(background_id: str):
     if bg.get("type") == "builtin":
         raise HTTPException(status_code=400, detail="Built-in backgrounds cannot be deleted.")
 
-    # Refuse deletion if any job is currently running
     for job in list_jobs():
         if job.get("status") == "running" and is_job_process_running(job["job_id"]):
             raise HTTPException(
@@ -168,6 +190,48 @@ def delete_background(background_id: str):
 
     logger.info("Deleted background %s", background_id)
     return {"success": True, "id": background_id}
+
+
+# ============================================================ QUEUE
+
+@app.get("/queue/status")
+def get_queue_status():
+    return queue_runner.get_status()
+
+
+@app.post("/queue/auto-run")
+def set_queue_auto_run(req: QueueAutoRunRequest):
+    queue_runner.set_auto_run(req.enabled)
+    return queue_runner.get_status()
+
+
+@app.post("/queue/pause")
+def pause_queue():
+    queue_runner.set_paused(True)
+    return queue_runner.get_status()
+
+
+@app.post("/queue/resume")
+def resume_queue():
+    queue_runner.set_paused(False)
+    return queue_runner.get_status()
+
+
+@app.post("/queue/run-next")
+def run_next_job():
+    job_id = queue_runner.run_next_pending()
+    if job_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No pending jobs or a job is already running.",
+        )
+    return {"started": job_id, **queue_runner.get_status()}
+
+
+@app.post("/queue/shutdown-after-complete")
+def set_shutdown_after_complete(req: QueueShutdownRequest):
+    queue_runner.set_shutdown_after_complete(req.enabled)
+    return queue_runner.get_status()
 
 
 # ============================================================ JOBS
@@ -316,10 +380,10 @@ def reset_job(job_id: str):
     if status == "pending":
         return job
 
-    job["status"]       = "pending"
-    job["started_at"]   = None
-    job["finished_at"]  = None
-    job["error_message"]= None
+    job["status"]        = "pending"
+    job["started_at"]    = None
+    job["finished_at"]   = None
+    job["error_message"] = None
     job.setdefault("progress", {})
     job["progress"]["stage"]          = "pending"
     job["progress"]["current_window"] = 0
@@ -329,3 +393,30 @@ def reset_job(job_id: str):
     save_job(job)
     logger.info("Reset job %s to pending (was: %s)", job_id, status)
     return job
+
+
+# ============================================================ SCRIPT ASSISTANT
+
+@app.post("/script/format")
+async def format_script(req: ScriptFormatRequest):
+    try:
+        result = await script_assistant.format_script(
+            raw_text=req.raw_text,
+            model=req.model,
+        )
+        return result
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "ollama_not_running":
+            raise HTTPException(
+                status_code=503,
+                detail="Ollama is not running. Please start Ollama first.",
+            )
+        if msg == "model_not_found":
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found. Please run: ollama pull {req.model}",
+            )
+        raise HTTPException(status_code=500, detail=f"AI formatting failed: {msg}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")

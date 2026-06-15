@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -87,10 +88,19 @@ class QueueRunner:
         self._save_state()
         logger.info("[QueueRunner] shutdown_after_complete → %s", enabled)
 
+    @property
+    def worker_alive(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     # ── status ─────────────────────────────────────────────────────────────
 
     def get_status(self) -> dict:
-        all_jobs = list_jobs()
+        try:
+            all_jobs = list_jobs()
+        except Exception as exc:
+            logger.warning("[QueueRunner] get_status list_jobs error: %s", exc)
+            all_jobs = []
+
         counts: dict = {}
         for j in all_jobs:
             s = j.get("status", "unknown")
@@ -121,6 +131,7 @@ class QueueRunner:
             "failed_count":            counts.get("failed",    0),
             "cancelled_count":         counts.get("cancelled", 0),
             "shutdown_after_complete": self.shutdown_after_complete,
+            "worker_alive":            self.worker_alive,
         }
 
     # ── queue operations ───────────────────────────────────────────────────
@@ -161,8 +172,13 @@ class QueueRunner:
                 and all_jobs
                 and all(j.get("status") in _DONE for j in all_jobs)
             ):
-                logger.info("[QueueRunner] All jobs done — SIGTERM (shutdown_after_complete)")
-                os.kill(os.getpid(), signal.SIGTERM)
+                logger.info("[QueueRunner] All jobs done — initiating Windows shutdown")
+                # Disable immediately so it never fires again (this cycle or after reboot)
+                self.set_shutdown_after_complete(False)
+                subprocess.Popen(
+                    ["/mnt/c/Windows/System32/shutdown.exe", "/s", "/t", "30"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
             return
 
         job_id = pending[0]["job_id"]

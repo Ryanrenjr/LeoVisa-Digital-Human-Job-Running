@@ -60,3 +60,7 @@ desktop.ini
 .env
 *.env
 secrets/
+
+# ── Runtime config state ──
+app/config/queue_state.json
+app/config/backgrounds.json

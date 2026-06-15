@@ -1,5 +1,8 @@
 export function QueueControlPanel({
   status,
+  loading,
+  error,
+  onRetry,
   onToggleAutoRun,
   onPause,
   onResume,
@@ -7,7 +10,6 @@ export function QueueControlPanel({
   onToggleShutdown,
   t,
 }) {
-  // Always render a shell — never invisible
   if (!status) {
     return (
       <div className="qcp">
@@ -15,9 +17,18 @@ export function QueueControlPanel({
           <span className="qcp-title">{t.queue.controlPanel}</span>
           <span className="qcp-status-badge qcp-s-idle">…</span>
         </div>
-        <div className="qcp-offline-hint">
-          {t.header.backendChecking}
-        </div>
+        {error ? (
+          <div className="qcp-error-row">
+            <span className="qcp-error-msg">{error}</span>
+            <button className="btn btn-ghost btn-xs" onClick={onRetry} type="button">
+              ↺ Retry
+            </button>
+          </div>
+        ) : (
+          <div className="qcp-offline-hint">
+            {loading ? t.header.backendChecking : t.header.backendChecking}
+          </div>
+        )}
       </div>
     )
   }

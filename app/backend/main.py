@@ -25,6 +25,7 @@ from schemas import (
     HealthResponse,
     JobCreateRequest,
     JobRunResponse,
+    PullModelRequest,
     QueueAutoRunRequest,
     QueueShutdownRequest,
     ScriptFormatRequest,
@@ -68,11 +69,13 @@ def _with_live_progress(job: dict) -> dict:
 
 
 def _with_artifacts(job: dict) -> dict:
-    job_id          = job.get("job_id", "")
-    clean_video     = job.get("paths", {}).get("clean_video", "")
-    subtitle_lines  = job.get("paths", {}).get("subtitle_lines_txt", "")
-    cv_exists       = bool(clean_video    and Path(clean_video).exists())
-    sl_exists       = bool(subtitle_lines and Path(subtitle_lines).exists())
+    job_id         = job.get("job_id", "")
+    clean_video    = job.get("paths", {}).get("clean_video", "")
+    # Derive subtitle_lines_txt even for jobs created before the field was added
+    sl_txt_path    = job.get("paths", {}).get("subtitle_lines_txt") or \
+                     str(AI_WORKSPACE / "jobs" / job_id / "output" / "subtitle_lines.txt")
+    cv_exists      = bool(clean_video and Path(clean_video).exists())
+    sl_exists      = bool(sl_txt_path and Path(sl_txt_path).exists())
     job = dict(job)
     job["artifacts"] = {
         "clean_video_exists":    cv_exists,
@@ -80,6 +83,11 @@ def _with_artifacts(job: dict) -> dict:
         "download_url":  f"/jobs/{job_id}/download" if cv_exists else None,
         "preview_url":   f"/jobs/{job_id}/download" if cv_exists else None,
     }
+    if sl_exists:
+        try:
+            job["subtitle_lines_text"] = Path(sl_txt_path).read_text(encoding="utf-8")
+        except Exception:
+            pass
     return job
 
 
@@ -196,7 +204,25 @@ def delete_background(background_id: str):
 
 @app.get("/queue/status")
 def get_queue_status():
-    return queue_runner.get_status()
+    try:
+        return queue_runner.get_status()
+    except Exception as exc:
+        logger.error("[QueueStatus] Unexpected error: %s", exc)
+        return {
+            "auto_run": False,
+            "paused": False,
+            "status": "idle",
+            "current_job_id": None,
+            "current_job_title": None,
+            "pending_count": 0,
+            "running_count": 0,
+            "finished_count": 0,
+            "failed_count": 0,
+            "cancelled_count": 0,
+            "shutdown_after_complete": False,
+            "worker_alive": False,
+            "error": str(exc),
+        }
 
 
 @app.post("/queue/auto-run")
@@ -397,6 +423,41 @@ def reset_job(job_id: str):
 
 # ============================================================ SCRIPT ASSISTANT
 
+@app.post("/script/install-ollama")
+async def install_ollama_endpoint():
+    return await script_assistant.install_ollama()
+
+
+@app.get("/script/install-status")
+async def install_status_endpoint():
+    return await script_assistant.install_status()
+
+
+@app.post("/script/repair-runners")
+async def repair_runners_endpoint():
+    return await script_assistant.repair_runners()
+
+
+@app.get("/script/repair-status")
+async def repair_status_endpoint():
+    return await script_assistant.repair_status()
+
+
+@app.post("/script/start-ollama")
+async def start_ollama_endpoint():
+    return await script_assistant.start_ollama()
+
+
+@app.post("/script/pull-model")
+async def pull_model_endpoint(req: PullModelRequest):
+    return await script_assistant.pull_model(req.model)
+
+
+@app.get("/script/pull-status")
+async def pull_status_endpoint(model: str = "qwen2.5:7b"):
+    return await script_assistant.pull_status(model)
+
+
 @app.get("/script/health")
 async def script_health(model: str = "qwen2.5:7b"):
     result = await script_assistant.check_health(model)
@@ -405,6 +466,9 @@ async def script_health(model: str = "qwen2.5:7b"):
     if msg_raw == "ollama_not_running":
         result["user_message"] = "Ollama is not running. Please start Ollama first."
         result["user_message_zh"] = "Ollama 未启动，请先启动 Ollama。"
+    elif msg_raw == "runner_missing":
+        result["user_message"] = "CPU runner missing. Please repair Ollama installation."
+        result["user_message_zh"] = "CPU 运行库缺失，请修复 Ollama 安装。"
     elif msg_raw.startswith("model_not_found:"):
         m = msg_raw.split(":", 1)[1]
         result["user_message"] = f"Model not found. Run: ollama pull {m}"
@@ -432,6 +496,14 @@ async def format_script(req: ScriptFormatRequest):
                 detail={
                     "code": "OLLAMA_NOT_RUNNING",
                     "message": "Ollama is not running. Please start Ollama first.",
+                },
+            )
+        if code == "runner_missing":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "RUNNER_MISSING",
+                    "message": "CPU runner missing. Click '② 修复运行库' to fix.",
                 },
             )
         if code.startswith("model_not_found:"):

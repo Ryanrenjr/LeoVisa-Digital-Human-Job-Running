@@ -297,6 +297,12 @@ body {
   color: var(--text-main);
   border-color: var(--border-dark);
 }
+.btn-warning {
+  background: #92400E;
+  color: #fff;
+  border-color: #92400E;
+}
+.btn-warning:hover:not(:disabled) { background: #78350F; border-color: #78350F; }
 .jc-btn-active {
   background: var(--light-bg);
   color: var(--navy);
@@ -547,6 +553,11 @@ body {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.detail-subtitle-lines {
+  font-family: inherit;
+  margin: 0;
 }
 
 /* ---------------------------------------------------------------- PROGRESS BOX */
@@ -976,6 +987,17 @@ body {
   font-style: italic;
   padding-top: 0.15rem;
 }
+.qcp-error-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+.qcp-error-msg {
+  font-size: 0.725rem;
+  color: var(--error);
+  flex: 1;
+}
 
 /* ---------------------------------------------------------------- AI SCRIPT ASSISTANT */
 .ai-assistant {
@@ -1065,6 +1087,7 @@ body {
 }
 .ai-model-input {
   font-size: 0.8rem;
+  cursor: pointer;
 }
 .ai-raw-textarea {
   font-size: 0.82rem;
@@ -1135,4 +1158,57 @@ body {
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
   margin-top: 0.5rem;
+}
+.ai-ollama-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.35rem 0;
+}
+.ai-action-btn {
+  width: 100%;
+  justify-content: center;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+}
+.ai-pull-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--light-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}
+.ai-pull-status.ai-health-ok {
+  color: var(--success);
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+.ai-pull-status.ai-health-fail {
+  color: var(--error);
+  background: var(--error-bg);
+  border-color: var(--error-border);
+}
+.ai-install-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ai-spinner {
+  display: inline-block;
+  animation: ai-spin 1.2s linear infinite;
+}
+@keyframes ai-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.ai-pull-log {
+  font-size: 0.68rem;
+  font-family: 'Courier New', monospace;
+  margin-top: 0.3rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 80px;
+  overflow-y: auto;
+  color: var(--text-muted);
 }

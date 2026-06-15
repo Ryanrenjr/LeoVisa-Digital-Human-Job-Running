@@ -56,3 +56,10 @@ export const setQueueShutdownOnComplete= (enabled) => request('POST', '/queue/sh
 // AI Script Assistant
 export const formatScript      = (payload) => request('POST', '/script/format', payload)
 export const checkScriptHealth = (model)   => request('GET',  `/script/health?model=${encodeURIComponent(model)}`)
+export const startOllama       = ()        => request('POST', '/script/start-ollama')
+export const pullModel         = (model)   => request('POST', '/script/pull-model', { model })
+export const getPullStatus     = (model)   => request('GET',  `/script/pull-status?model=${encodeURIComponent(model)}`)
+export const installOllama     = ()        => request('POST', '/script/install-ollama')
+export const getInstallStatus  = ()        => request('GET',  '/script/install-status')
+export const repairRunners     = ()        => request('POST', '/script/repair-runners')
+export const getRepairStatus   = ()        => request('GET',  '/script/repair-status')

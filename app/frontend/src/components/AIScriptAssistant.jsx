@@ -1,20 +1,42 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import * as api from '../api'
 
-const DEFAULT_MODEL = 'qwen2.5:7b'
+const DEFAULT_MODEL   = 'qwen2.5:7b'
+const POLL_INTERVAL   = 5000   // ms between auto-polls
+const KNOWN_MODELS    = ['qwen2.5:7b', 'qwen2.5:14b', 'qwen2.5:3b', 'qwen2.5:1.5b']
 
 export function AIScriptAssistant({ onApply, t }) {
-  const [expanded,   setExpanded]   = useState(false)
-  const [rawScript,  setRawScript]  = useState('')
-  const [model,      setModel]      = useState(DEFAULT_MODEL)
-  const [loading,    setLoading]    = useState(false)
-  const [testing,    setTesting]    = useState(false)
-  const [healthInfo, setHealthInfo] = useState(null)   // {ok, message, available_models}
-  const [result,     setResult]     = useState(null)
-  const [editResult, setEditResult] = useState(null)
-  const [error,      setError]      = useState(null)
-  const [applied,    setApplied]    = useState(false)
-  const [copied,     setCopied]     = useState(false)
+  const [expanded,       setExpanded]       = useState(false)
+  const [rawScript,      setRawScript]      = useState('')
+  const [model,          setModel]          = useState(DEFAULT_MODEL)
+
+  // AI formatting
+  const [loading,        setLoading]        = useState(false)
+  const [result,         setResult]         = useState(null)
+  const [editResult,     setEditResult]     = useState(null)
+  const [error,          setError]          = useState(null)
+  const [applied,        setApplied]        = useState(false)
+  const [copied,         setCopied]         = useState(false)
+
+  // Health / connection
+  const [testing,        setTesting]        = useState(false)
+  const [healthInfo,     setHealthInfo]     = useState(null)
+
+  // Install flow
+  const [installingOllama, setInstallingOllama] = useState(false)
+  const [installStatus,    setInstallStatus]    = useState(null)   // {installed,running,failed,log_tail}
+
+  // Start Ollama flow
+  const [startingOllama,    setStartingOllama]    = useState(false)
+  const [oneClickStarting,  setOneClickStarting]  = useState(false)
+
+  // Repair runners flow
+  const [repairingRunners, setRepairingRunners] = useState(false)
+  const [repairStatus,     setRepairStatus]     = useState(null)   // {runner_ok,running,failed,log_tail}
+
+  // Pull model flow
+  const [pullingModel,   setPullingModel]   = useState(false)
+  const [pullStatus,     setPullStatus]     = useState(null)       // {installed,running,log_tail}
 
   const setField = (key, val) =>
     setEditResult(r => ({ ...r, [key]: val }))
@@ -22,49 +44,241 @@ export function AIScriptAssistant({ onApply, t }) {
   // ── Error parsing ─────────────────────────────────────────────────────────
 
   const parseError = (e) => {
-    // detail can be a string or a structured {code, message, model} object
     const detail = e.detail
     const status = e.status
-
     if (detail && typeof detail === 'object') {
       const code = detail.code
       if (code === 'OLLAMA_NOT_RUNNING') return t.ai.ollamaError
-      if (code === 'MODEL_NOT_FOUND') {
-        return `${t.ai.modelError} ${detail.model || model}`
-      }
+      if (code === 'RUNNER_MISSING')     return t.ai.runnerError
+      if (code === 'MODEL_NOT_FOUND')    return `${t.ai.modelError} ${detail.model || model}`
       return `${t.ai.genericError}: ${detail.message || JSON.stringify(detail)}`
     }
-
     const msg = typeof detail === 'string' ? detail : (e.message || '')
     const lc  = msg.toLowerCase()
-
-    if (status === 503 || lc.includes('not running') || lc.includes('ollama'))
-      return t.ai.ollamaError
-    if (status === 404 || lc.includes('not found'))
-      return `${t.ai.modelError} ${model}`
+    if (status === 503 || lc.includes('not running') || lc.includes('ollama')) return t.ai.ollamaError
+    if (lc.includes('runner') || lc.includes('llama-server'))  return t.ai.runnerError
+    if (status === 404 || lc.includes('not found'))  return `${t.ai.modelError} ${model}`
     return `${t.ai.genericError}: ${msg || status}`
   }
 
-  // ── Test connection ───────────────────────────────────────────────────────
+  // ── Step 0: Test health ───────────────────────────────────────────────────
 
-  const handleTest = async () => {
+  const handleTest = useCallback(async () => {
     setTesting(true)
     setHealthInfo(null)
+    setPullStatus(null)
+    setInstallStatus(null)
+    setRepairStatus(null)
     try {
       const res = await api.checkScriptHealth(model)
       setHealthInfo(res)
     } catch (e) {
+      const isNetworkErr = !e.status && /fetch|network|connect/i.test(e.message || '')
       setHealthInfo({
-        ok: false,
-        ollama_running: false,
-        model_found: false,
-        user_message: parseError(e),
+        ok: false, ollama_running: false,
+        ollama_installed: isNetworkErr ? null : false,  // null = unknown (backend unreachable)
+        runner_ok: true, model_found: false,
+        user_message: isNetworkErr ? (t.ai.genericError + ': Failed to fetch — backend not running?') : parseError(e),
         available_models: [],
+        network_error: isNetworkErr,
       })
     } finally {
       setTesting(false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model])
+
+  // ── Step 1: Install Ollama ────────────────────────────────────────────────
+
+  const handleInstallOllama = async () => {
+    setInstallingOllama(true)
+    setError(null)
+    try {
+      const res = await api.installOllama()
+      if (res.already_installed) {
+        // Already installed — just update health state and proceed
+        setHealthInfo(prev => ({
+          ...prev,
+          ollama_installed: true,
+          user_message:    res.message    || '',
+          user_message_zh: res.message_zh || '',
+        }))
+      } else if (res.ok && res.started) {
+        // Download in progress — start polling
+        setInstallStatus({ installed: false, running: true, failed: false, log_tail: '' })
+      } else {
+        setInstallStatus({ installed: false, running: false, failed: true, log_tail: res.message_zh || res.message || '' })
+      }
+    } catch (e) {
+      setInstallStatus({ installed: false, running: false, failed: true, log_tail: parseError(e) })
+    } finally {
+      setInstallingOllama(false)
+    }
   }
+
+  // Auto-poll install status while download is running
+  useEffect(() => {
+    if (!installStatus?.running) return
+    const timer = setInterval(async () => {
+      try {
+        const res = await api.getInstallStatus()
+        setInstallStatus(res)
+        if (res.installed) {
+          // Download finished — auto-start Ollama
+          clearInterval(timer)
+          handleStartOllamaInternal()
+        } else if (!res.running) {
+          clearInterval(timer)  // failed or unexpected stop
+        }
+      } catch { /* ignore poll errors */ }
+    }, POLL_INTERVAL)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installStatus?.running])
+
+  // ── Step 1b: Repair CPU runners ──────────────────────────────────────────
+
+  const handleRepairRunners = async () => {
+    setRepairingRunners(true)
+    setError(null)
+    try {
+      const res = await api.repairRunners()
+      if (res.already_ok) {
+        await handleTest()
+      } else if (res.ok && res.started) {
+        setRepairStatus({ runner_ok: false, running: true, failed: false, log_tail: '' })
+      } else {
+        setRepairStatus({ runner_ok: false, running: false, failed: true, log_tail: res.message_zh || res.message || '' })
+      }
+    } catch (e) {
+      setRepairStatus({ runner_ok: false, running: false, failed: true, log_tail: parseError(e) })
+    } finally {
+      setRepairingRunners(false)
+    }
+  }
+
+  // Auto-poll repair status while running
+  useEffect(() => {
+    if (!repairStatus?.running) return
+    const timer = setInterval(async () => {
+      try {
+        const res = await api.getRepairStatus()
+        setRepairStatus(res)
+        if (res.runner_ok) {
+          clearInterval(timer)
+          await handleTest()
+        } else if (!res.running) {
+          clearInterval(timer)
+        }
+      } catch { /* ignore */ }
+    }, POLL_INTERVAL)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repairStatus?.running])
+
+  // ── Step 2: Start Ollama ──────────────────────────────────────────────────
+
+  const handleStartOllamaInternal = async () => {
+    setStartingOllama(true)
+    setInstallStatus(null)
+    try {
+      const res = await api.startOllama()
+      if (res.ok) {
+        await handleTest()   // refresh health → shows model status
+      } else {
+        // Not installed after all — re-check
+        setHealthInfo({
+          ok: false, ollama_running: false,
+          ollama_installed: res.ollama_installed ?? false,
+          model_found: false, available_models: [],
+          user_message:    res.message    || t.ai.ollamaError,
+          user_message_zh: res.message_zh || t.ai.ollamaError,
+        })
+      }
+    } catch (e) {
+      setHealthInfo(prev => ({
+        ok: false, ollama_running: false,
+        ollama_installed: prev?.ollama_installed ?? false,
+        model_found: false, available_models: prev?.available_models || [],
+        user_message:    parseError(e),
+        user_message_zh: parseError(e),
+      }))
+    } finally {
+      setStartingOllama(false)
+    }
+  }
+
+  const handleStartOllama = () => handleStartOllamaInternal()
+
+  // ── One-click start: check → start → pull in sequence ────────────────────
+
+  const handleOneClickStart = async () => {
+    setOneClickStarting(true)
+    setError(null)
+    try {
+      const health = await api.checkScriptHealth(model)
+      setHealthInfo(health)
+      if (health.ok) return
+
+      if (!health.ollama_installed) return   // show install wizard, user must install manually
+
+      if (!health.ollama_running) {
+        await handleStartOllamaInternal()    // starts Ollama + re-checks health internally
+        return
+      }
+
+      if (health.runner_ok === false) {
+        await handleRepairRunners()
+        return
+      }
+
+      if (!health.model_found) {
+        await handlePullModel()
+      }
+    } catch (e) {
+      setError(parseError(e))
+    } finally {
+      setOneClickStarting(false)
+    }
+  }
+
+  // ── Step 3: Pull model ────────────────────────────────────────────────────
+
+  const handlePullModel = async () => {
+    setPullingModel(true)
+    setPullStatus(null)
+    try {
+      const res = await api.pullModel(model)
+      if (res.ok) {
+        setPullStatus({ running: res.started && !res.installed, installed: !!res.installed, log_tail: '' })
+      } else {
+        setError(res.message_zh || res.message || t.ai.pullFailed)
+      }
+    } catch (e) {
+      setError(parseError(e))
+    } finally {
+      setPullingModel(false)
+    }
+  }
+
+  // Auto-poll pull status while model is downloading
+  useEffect(() => {
+    if (!pullStatus?.running) return
+    const timer = setInterval(async () => {
+      try {
+        const res = await api.getPullStatus(model)
+        setPullStatus(res)
+        if (res.installed) {
+          clearInterval(timer)
+          await handleTest()   // refresh to show "AI Ready"
+        } else if (!res.running) {
+          clearInterval(timer)
+        }
+      } catch { /* ignore */ }
+    }, POLL_INTERVAL)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pullStatus?.running, model])
 
   // ── Format ────────────────────────────────────────────────────────────────
 
@@ -95,15 +309,12 @@ export function AIScriptAssistant({ onApply, t }) {
   // ── Apply ─────────────────────────────────────────────────────────────────
 
   const handleApply = () => {
-    const keywords = editResult.keywords
-      .split(',')
-      .map(k => k.trim())
-      .filter(Boolean)
+    const keywords = editResult.keywords.split(',').map(k => k.trim()).filter(Boolean)
     onApply({
-      title:         editResult.title,
-      subtitle:      editResult.subtitle,
+      title:          editResult.title,
+      subtitle:       editResult.subtitle,
       keywords,
-      script:        editResult.clean_script,
+      script:         editResult.clean_script,
       subtitle_lines: editResult.subtitle_lines.split('\n').map(s => s.trim()).filter(Boolean),
       opening_hook:   editResult.opening_hook,
       script_source:  'ollama',
@@ -119,23 +330,161 @@ export function AIScriptAssistant({ onApply, t }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // ── Health info display ───────────────────────────────────────────────────
+  // ── Render: setup wizard ──────────────────────────────────────────────────
 
-  const renderHealthInfo = () => {
+  const renderSetupFlow = () => {
     if (!healthInfo) return null
-    const msg = healthInfo.user_message_zh || healthInfo.user_message || ''
-    const ok  = healthInfo.ok
 
-    return (
-      <div className={`ai-health${ok ? ' ai-health-ok' : ' ai-health-fail'}`}>
-        {ok ? '✓ ' : '✕ '}{msg}
-        {!ok && healthInfo.available_models?.length > 0 && (
+    const { ollama_installed, ollama_running, model_found, ok } = healthInfo
+
+    // Message banner
+    const msg  = healthInfo.user_message_zh || healthInfo.user_message || ''
+    const msgOk = ok
+
+    const banner = (
+      <div className={`ai-health${msgOk ? ' ai-health-ok' : ' ai-health-fail'}`}>
+        {msgOk ? '✓ ' : '✕ '}{msg}
+        {!msgOk && healthInfo.available_models?.length > 0 && (
           <div className="ai-health-models">
             {t.ai.availableModels} {healthInfo.available_models.join(', ')}
           </div>
         )}
       </div>
     )
+
+    // Network error — backend unreachable, don't show any wizard steps
+    if (healthInfo.network_error) return banner
+
+    // Step 1 — Ollama not installed
+    if (ollama_installed === false) {
+      return (
+        <>
+          {banner}
+          <div className="ai-ollama-actions">
+            {/* Install progress */}
+            {installStatus?.running && (
+              <div className="ai-pull-status ai-install-progress">
+                <span className="ai-spinner">⟳</span> {t.ai.installInProgress}
+              </div>
+            )}
+            {installStatus?.failed && (
+              <div className="ai-pull-status ai-health-fail">
+                {t.ai.installFailed}
+                {installStatus.log_tail && <pre className="ai-pull-log">{installStatus.log_tail}</pre>}
+              </div>
+            )}
+
+            {!installStatus?.running && (
+              <button
+                className="btn btn-warning btn-sm ai-action-btn"
+                onClick={handleInstallOllama}
+                disabled={installingOllama}
+                type="button"
+              >
+                {installingOllama ? t.ai.installingOllama : `① ${t.ai.installOllama}`}
+              </button>
+            )}
+          </div>
+        </>
+      )
+    }
+
+    // Step 2 — Installed but not running
+    if (ollama_installed && !ollama_running) {
+      return (
+        <>
+          {banner}
+          <div className="ai-ollama-actions">
+            {startingOllama && (
+              <div className="ai-pull-status ai-install-progress">
+                <span className="ai-spinner">⟳</span> {t.ai.startingOllama}
+              </div>
+            )}
+            {!startingOllama && (
+              <button
+                className="btn btn-warning btn-sm ai-action-btn"
+                onClick={handleStartOllama}
+                disabled={startingOllama || testing}
+                type="button"
+              >
+                {`② ${t.ai.startOllama}`}
+              </button>
+            )}
+          </div>
+        </>
+      )
+    }
+
+    // Step 2b — Running but CPU runner missing
+    const runner_ok = healthInfo.runner_ok !== false  // default true for backwards compat
+    if (ollama_running && !runner_ok) {
+      return (
+        <>
+          {banner}
+          <div className="ai-ollama-actions">
+            {repairStatus?.running && (
+              <div className="ai-pull-status ai-install-progress">
+                <span className="ai-spinner">⟳</span> {t.ai.repairInProgress}
+              </div>
+            )}
+            {repairStatus?.runner_ok && (
+              <div className="ai-pull-status ai-health-ok">{t.ai.repairDone}</div>
+            )}
+            {repairStatus?.failed && (
+              <div className="ai-pull-status ai-health-fail">
+                {t.ai.repairFailed}
+                {repairStatus.log_tail && <pre className="ai-pull-log">{repairStatus.log_tail}</pre>}
+              </div>
+            )}
+            {!repairStatus?.running && !repairStatus?.runner_ok && (
+              <button
+                className="btn btn-warning btn-sm ai-action-btn"
+                onClick={handleRepairRunners}
+                disabled={repairingRunners}
+                type="button"
+              >
+                {repairingRunners ? t.ai.repairingRunners : t.ai.repairRunners}
+              </button>
+            )}
+          </div>
+        </>
+      )
+    }
+
+    // Step 3 — Running but model missing
+    if (ollama_running && !model_found) {
+      return (
+        <>
+          {banner}
+          <div className="ai-ollama-actions">
+            {pullStatus?.running && (
+              <div className="ai-pull-status ai-install-progress">
+                <span className="ai-spinner">⟳</span> {t.ai.downloadInProgress}
+              </div>
+            )}
+            {pullStatus?.installed && (
+              <div className="ai-pull-status ai-health-ok">{t.ai.modelInstalled}</div>
+            )}
+            {!pullStatus?.running && !pullStatus?.installed && (
+              <button
+                className="btn btn-warning btn-sm ai-action-btn"
+                onClick={handlePullModel}
+                disabled={pullingModel}
+                type="button"
+              >
+                {pullingModel ? t.ai.pullingModel : `③ ${t.ai.pullModel}: ${model}`}
+              </button>
+            )}
+            {pullStatus?.log_tail && !pullStatus.installed && (
+              <pre className="ai-pull-log">{pullStatus.log_tail}</pre>
+            )}
+          </div>
+        </>
+      )
+    }
+
+    // All good — show green banner only
+    return banner
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -153,28 +502,43 @@ export function AIScriptAssistant({ onApply, t }) {
 
       {expanded && (
         <div className="ai-body">
-          {/* Model row + Test button */}
+          {/* Model row + buttons */}
           <div className="ai-model-row">
             <div className="ai-model-group">
               <label className="ai-field-label">{t.ai.modelLabel}</label>
-              <input
+              <select
                 className="form-input ai-model-input"
                 value={model}
-                onChange={e => { setModel(e.target.value); setHealthInfo(null) }}
-                placeholder={DEFAULT_MODEL}
-              />
+                onChange={e => { setModel(e.target.value); setHealthInfo(null); setPullStatus(null); setInstallStatus(null); setRepairStatus(null) }}
+              >
+                {[...new Set([
+                  ...KNOWN_MODELS,
+                  ...(healthInfo?.available_models || []),
+                  model,
+                ])].filter(Boolean).map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             </div>
+            <button
+              className="btn btn-primary btn-sm ai-test-btn"
+              onClick={handleOneClickStart}
+              disabled={oneClickStarting || testing || startingOllama || installingOllama}
+              type="button"
+            >
+              {oneClickStarting ? t.ai.oneClickStarting : t.ai.oneClickStart}
+            </button>
             <button
               className="btn btn-ghost btn-sm ai-test-btn"
               onClick={handleTest}
-              disabled={testing}
+              disabled={testing || oneClickStarting || startingOllama || installingOllama}
               type="button"
             >
               {testing ? t.ai.testing : t.ai.testConnection}
             </button>
           </div>
 
-          {renderHealthInfo()}
+          {renderSetupFlow()}
 
           {/* Raw script */}
           <div className="ai-input-row">
@@ -220,11 +584,7 @@ export function AIScriptAssistant({ onApply, t }) {
               <div className="ai-field">
                 <div className="ai-field-header">
                   <span className="ai-field-label">{t.ai.subtitleLines}</span>
-                  <button
-                    className="btn btn-ghost btn-xs"
-                    onClick={handleCopySubtitles}
-                    type="button"
-                  >
+                  <button className="btn btn-ghost btn-xs" onClick={handleCopySubtitles} type="button">
                     {copied ? t.ai.copied : t.ai.copySubtitles}
                   </button>
                 </div>
@@ -237,11 +597,7 @@ export function AIScriptAssistant({ onApply, t }) {
               </div>
 
               <div className="ai-apply-row">
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={handleApply}
-                  type="button"
-                >
+                <button className="btn btn-primary btn-sm" onClick={handleApply} type="button">
                   {applied ? t.ai.applied : t.ai.applyToForm}
                 </button>
               </div>
@@ -262,18 +618,11 @@ function AiField({ label, value, onChange, rows }) {
     <div className="ai-field">
       <label className="ai-field-label">{label}</label>
       {rows ? (
-        <textarea
-          className="form-textarea"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          rows={rows}
-        />
+        <textarea className="form-textarea" value={value}
+          onChange={e => onChange(e.target.value)} rows={rows} />
       ) : (
-        <input
-          className="form-input"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-        />
+        <input className="form-input" value={value}
+          onChange={e => onChange(e.target.value)} />
       )}
     </div>
   )

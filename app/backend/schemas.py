@@ -42,3 +42,7 @@ class QueueAutoRunRequest(BaseModel):
 
 class QueueShutdownRequest(BaseModel):
     enabled: bool
+
+
+class PullModelRequest(BaseModel):
+    model: str

@@ -18,6 +18,8 @@ export default function App() {
   const [isSubmitting,        setIsSubmitting]        = useState(false)
   const [uploadingBackground, setUploadingBackground] = useState(false)
   const [queueStatus,         setQueueStatus]         = useState(null)
+  const [queueLoading,        setQueueLoading]        = useState(true)
+  const [queueError,          setQueueError]          = useState(null)
   const [language,            setLanguage]            = useState(
     () => localStorage.getItem('leovisa_language') || 'en'
   )
@@ -47,8 +49,19 @@ export default function App() {
   }, [])
 
   const loadQueueStatus = useCallback(async () => {
-    try   { setQueueStatus(await api.getQueueStatus()) }
-    catch (e) { console.warn('queue status:', e) }
+    try {
+      const s = await api.getQueueStatus()
+      setQueueStatus(s)
+      setQueueError(null)
+    } catch (e) {
+      // If we've never loaded successfully, surface error; otherwise keep stale data silently
+      setQueueStatus(prev => {
+        if (prev === null) setQueueError(e.message || 'Failed to reach backend')
+        return prev
+      })
+    } finally {
+      setQueueLoading(false)
+    }
   }, [])
 
   const loadJobLog = useCallback(async (jobId) => {
@@ -111,6 +124,12 @@ export default function App() {
       showBanner('error', e.detail || t.backgrounds.deleteBuiltinError)
     }
   }
+
+  const retryQueueStatus = useCallback(() => {
+    setQueueLoading(true)
+    setQueueError(null)
+    loadQueueStatus()
+  }, [loadQueueStatus])
 
   // ---- Queue handlers ----
   const handleToggleAutoRun = async (enabled) => {
@@ -265,6 +284,9 @@ export default function App() {
         <div className="right-panel">
           <QueueControlPanel
             status={queueStatus}
+            loading={queueLoading}
+            error={queueError}
+            onRetry={retryQueueStatus}
             onToggleAutoRun={handleToggleAutoRun}
             onPause={handlePauseQueue}
             onResume={handleResumeQueue}

@@ -125,13 +125,18 @@ export function JobDetail({ job, log, onClose, onRefreshLog, onCancel, onReset, 
           )}
         </div>
 
-        {/* ── Script ── */}
-        {job.script && (
+        {/* ── Subtitle lines (AI-generated) or fallback to raw script ── */}
+        {job.subtitle_lines_text ? (
+          <div className="detail-section">
+            <div className="detail-section-title">{t.detail.subtitleLinesLabel}</div>
+            <pre className="detail-script detail-subtitle-lines">{job.subtitle_lines_text}</pre>
+          </div>
+        ) : job.script ? (
           <div className="detail-section">
             <div className="detail-section-title">{t.detail.scriptLabel}</div>
             <div className="detail-script">{job.script}</div>
           </div>
-        )}
+        ) : null}
 
         {/* ── Progress ── */}
         <ProgressBox job={job} t={t} />

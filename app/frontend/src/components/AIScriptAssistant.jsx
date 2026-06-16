@@ -289,18 +289,32 @@ export function AIScriptAssistant({ onApply, t }) {
     setResult(null)
     setApplied(false)
     try {
-      const r = await api.formatScript({ raw_text: rawScript, model })
-      setResult(r)
-      setEditResult({
-        title:          r.title          || '',
-        subtitle:       r.subtitle       || '',
-        keywords:       (r.keywords || []).join(', '),
-        clean_script:   r.clean_script   || '',
-        subtitle_lines: (r.subtitle_lines || []).join('\n'),
-        opening_hook:   r.opening_hook   || '',
-      })
-    } catch (e) {
-      setError(parseError(e))
+      let lastError = null
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (attempt > 0) {
+          setError(`后端启动中，正在重试… (${attempt}/5)`)
+          await new Promise(r => setTimeout(r, 3000))
+        }
+        try {
+          const r = await api.formatScript({ raw_text: rawScript, model })
+          setError(null)
+          setResult(r)
+          setEditResult({
+            title:          r.title          || '',
+            subtitle:       r.subtitle       || '',
+            keywords:       (r.keywords || []).join(', '),
+            clean_script:   r.clean_script   || '',
+            subtitle_lines: (r.subtitle_lines || []).join('\n'),
+            opening_hook:   r.opening_hook   || '',
+          })
+          return
+        } catch (e) {
+          lastError = e
+          const isNetworkErr = !e.status && /fetch|network|connect/i.test(e.message || '')
+          if (!isNetworkErr) { setError(parseError(e)); return }
+        }
+      }
+      setError(parseError(lastError))
     } finally {
       setLoading(false)
     }

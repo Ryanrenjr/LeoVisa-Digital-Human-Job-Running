@@ -1,3 +1,5 @@
+import os
+import signal
 import subprocess
 from typing import Optional
 
@@ -41,6 +43,43 @@ def is_job_process_running(job_id: str) -> bool:
         for line in lines:
             for marker in _PIPELINE_MARKERS:
                 if marker in line:
+                    return True
+
+        return False
+    except Exception:
+        return False
+
+
+def kill_job_process(job_id: str) -> bool:
+    """
+    Kill the running pipeline for job_id by sending SIGTERM to its process group.
+    Tries the exact run_cleanvideo_job.sh process first, then any pipeline markers.
+    Returns True if at least one process was signalled.
+    """
+    try:
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+
+        def _kill_pgid(pid: int) -> bool:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                return True
+            except (ProcessLookupError, OSError):
+                return False
+
+        # Priority 1: the exact run script with this job_id
+        for line in lines:
+            if "run_cleanvideo_job.sh" in line and job_id in line:
+                pid = int(line.split()[1])
+                if _kill_pgid(pid):
+                    return True
+
+        # Priority 2: any pipeline stage process (LatentSync / VoxCPM2 / etc.)
+        for line in lines:
+            for marker in _PIPELINE_MARKERS:
+                if marker in line:
+                    pid = int(line.split()[1])
+                    _kill_pgid(pid)
                     return True
 
         return False

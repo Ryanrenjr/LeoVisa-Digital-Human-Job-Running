@@ -20,7 +20,7 @@ from background_utils import (
 from job_store import create_job, list_jobs, load_job, save_job
 from progress_utils import get_cleanvideo_progress
 from queue_runner import queue_runner
-from runner import check_no_other_running_job, is_job_process_running, start_job
+from runner import check_no_other_running_job, is_job_process_running, kill_job_process, start_job
 from schemas import (
     HealthResponse,
     JobCreateRequest,
@@ -374,11 +374,9 @@ def cancel_job(job_id: str):
     status = job.get("status")
     if status == "finished":
         raise HTTPException(status_code=400, detail="Cannot cancel a finished job.")
-    if status == "running" and is_job_process_running(job_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Job appears to be actively running. Stop process manually before cancelling.",
-        )
+
+    if status == "running":
+        kill_job_process(job_id)
 
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     job["status"]        = "cancelled"

@@ -74,14 +74,18 @@ def _with_artifacts(job: dict) -> dict:
     # Derive subtitle_lines_txt even for jobs created before the field was added
     sl_txt_path    = job.get("paths", {}).get("subtitle_lines_txt") or \
                      str(AI_WORKSPACE / "jobs" / job_id / "output" / "subtitle_lines.txt")
+    voice_wav      = job.get("paths", {}).get("voice_wav", "")
     cv_exists      = bool(clean_video and Path(clean_video).exists())
     sl_exists      = bool(sl_txt_path and Path(sl_txt_path).exists())
+    vw_exists      = bool(voice_wav and Path(voice_wav).exists())
     job = dict(job)
     job["artifacts"] = {
         "clean_video_exists":    cv_exists,
+        "voice_wav_exists":      vw_exists,
         "subtitle_lines_exists": sl_exists,
-        "download_url":  f"/jobs/{job_id}/download" if cv_exists else None,
-        "preview_url":   f"/jobs/{job_id}/download" if cv_exists else None,
+        "download_url":       f"/jobs/{job_id}/download"       if cv_exists else None,
+        "preview_url":        f"/jobs/{job_id}/download"       if cv_exists else None,
+        "voice_download_url": f"/jobs/{job_id}/download-voice" if vw_exists else None,
     }
     if sl_exists:
         try:
@@ -363,6 +367,23 @@ def download_job(job_id: str):
         raise HTTPException(status_code=404, detail="clean_video.mp4 not found for this job.")
 
     return FileResponse(path=clean_video, media_type="video/mp4")
+
+
+@app.get("/jobs/{job_id}/download-voice")
+def download_job_voice(job_id: str):
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    voice_wav = job.get("paths", {}).get("voice_wav", "")
+    if not voice_wav or not Path(voice_wav).exists():
+        raise HTTPException(status_code=404, detail="voice.wav not found for this job.")
+
+    return FileResponse(
+        path=voice_wav,
+        media_type="audio/wav",
+        filename=f"{job_id}_voice.wav",
+    )
 
 
 @app.post("/jobs/{job_id}/cancel")

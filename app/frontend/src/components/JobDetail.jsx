@@ -70,7 +70,9 @@ export function JobDetail({ job, log, onClose, onRefreshLog, onCancel, onReset, 
   const paths      = job.paths || {}
   const artifacts  = job.artifacts || {}
   const videoExists = artifacts.clean_video_exists
-  const videoUrl    = videoExists ? api.getVideoUrl(job.job_id) : null
+  const voiceExists = artifacts.voice_wav_exists
+  const videoUrl    = videoExists ? api.getVideoUrl(job.job_id)  : null
+  const voiceUrl    = voiceExists ? api.getVoiceUrl(job.job_id)  : null
 
   const canCancel = job.status !== 'finished'
   const canReset  = ['failed', 'cancelled', 'running'].includes(job.status)
@@ -81,6 +83,16 @@ export function JobDetail({ job, log, onClose, onRefreshLog, onCancel, onReset, 
     const a = document.createElement('a')
     a.href = videoUrl
     a.download = `${job.job_id}_clean_video.mp4`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  const handleDownloadVoice = () => {
+    if (!voiceUrl) return
+    const a = document.createElement('a')
+    a.href = voiceUrl
+    a.download = `${job.job_id}_voice.wav`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -163,8 +175,20 @@ export function JobDetail({ job, log, onClose, onRefreshLog, onCancel, onReset, 
           </div>
         )}
 
-        {/* ── Output paths (finished, no video somehow) ── */}
-        {job.status === 'finished' && !videoExists && (
+        {/* ── Voice-only output (finished, no video) ── */}
+        {job.status === 'finished' && !videoExists && voiceExists && (
+          <div className="detail-section">
+            <div className="output-actions">
+              <button className="btn btn-primary btn-sm" onClick={handleDownloadVoice}>
+                ⬇ 下载 voice.wav
+              </button>
+            </div>
+            <Row label={t.detail.windowsOutput} value={paths.windows_desktop_output} mono />
+          </div>
+        )}
+
+        {/* ── Output paths (finished, no video, no voice) ── */}
+        {job.status === 'finished' && !videoExists && !voiceExists && (
           <div className="detail-section">
             <Row label={t.detail.outputLabel}    value={paths.clean_video}            mono />
             <Row label={t.detail.windowsOutput}  value={paths.windows_desktop_output} mono />

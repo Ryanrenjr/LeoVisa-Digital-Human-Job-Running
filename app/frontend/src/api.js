@@ -25,6 +25,7 @@ export const resetJob       = (jobId)   => request('POST',   `/jobs/${jobId}/res
 export const deleteJob      = (jobId)   => request('DELETE', `/jobs/${jobId}`)
 export const getJobLog      = (jobId)   => request('GET',    `/jobs/${jobId}/log`)
 export const getVideoUrl    = (jobId)   => `${BASE_URL}/jobs/${jobId}/download`
+export const getVoiceUrl   = (jobId)   => `${BASE_URL}/jobs/${jobId}/download-voice`
 
 // Background management
 export const deleteBackground = (bgId) => request('DELETE', `/backgrounds/${bgId}`)

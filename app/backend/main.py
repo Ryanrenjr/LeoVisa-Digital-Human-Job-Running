@@ -264,10 +264,10 @@ def set_shutdown_after_complete(req: QueueShutdownRequest):
 
 @app.post("/jobs")
 def create_job_endpoint(req: JobCreateRequest):
-    if req.output_type != "clean_video":
+    if req.output_type not in ("clean_video", "voice_only"):
         raise HTTPException(
             status_code=400,
-            detail=f"output_type '{req.output_type}' is not supported. Only clean_video is implemented in V1.",
+            detail=f"output_type '{req.output_type}' is not supported. Use 'clean_video' or 'voice_only'.",
         )
     try:
         job = create_job(req)

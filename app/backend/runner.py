@@ -3,9 +3,10 @@ import signal
 import subprocess
 from typing import Optional
 
-from job_store import list_jobs
+from job_store import list_jobs, load_job
 
-RUN_SCRIPT = "/home/ryanrenjr/AI-Workspace/scripts/run_cleanvideo_job.sh"
+RUN_SCRIPT       = "/home/ryanrenjr/AI-Workspace/scripts/run_cleanvideo_job.sh"
+RUN_VOICE_SCRIPT = "/home/ryanrenjr/AI-Workspace/scripts/run_voice_only_job.sh"
 
 _PIPELINE_MARKERS = [
     "run_02_latentsync_overlap.sh",
@@ -88,8 +89,10 @@ def kill_job_process(job_id: str) -> bool:
 
 
 def start_job(job_id: str) -> int:
+    job = load_job(job_id)
+    script = RUN_VOICE_SCRIPT if job and job.get("output_type") == "voice_only" else RUN_SCRIPT
     proc = subprocess.Popen(
-        ["bash", RUN_SCRIPT, job_id],
+        ["bash", script, job_id],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

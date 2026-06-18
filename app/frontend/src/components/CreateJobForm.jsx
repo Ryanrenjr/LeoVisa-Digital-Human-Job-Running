@@ -36,9 +36,10 @@ export function CreateJobForm({
 
   const validate = () => {
     const e = {}
-    if (!fields.title.trim())   e.title        = t.form.required
-    if (!fields.script.trim())  e.script       = t.form.required
-    if (!fields.background_id)  e.background_id = t.form.required
+    if (!fields.title.trim())  e.title  = t.form.required
+    if (!fields.script.trim()) e.script = t.form.required
+    if (fields.output_type === 'clean_video' && !fields.background_id)
+      e.background_id = t.form.required
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -116,20 +117,22 @@ export function CreateJobForm({
         {errors.script && <div className="form-error">{errors.script}</div>}
       </div>
 
-      {/* ── Background picker ── */}
-      <div className="form-group">
-        <label className="form-label">{t.form.background} <span className="req">*</span></label>
-        <BackgroundPicker
-          backgrounds={backgrounds}
-          selectedId={fields.background_id}
-          onSelect={id => set('background_id', id)}
-          onDelete={handleDeleteBackground}
-          onUpload={onUploadBackground}
-          uploading={uploadingBackground}
-          t={t}
-        />
-        {errors.background_id && <div className="form-error">{errors.background_id}</div>}
-      </div>
+      {/* ── Background picker (clean_video only) ── */}
+      {fields.output_type === 'clean_video' && (
+        <div className="form-group">
+          <label className="form-label">{t.form.background} <span className="req">*</span></label>
+          <BackgroundPicker
+            backgrounds={backgrounds}
+            selectedId={fields.background_id}
+            onSelect={id => set('background_id', id)}
+            onDelete={handleDeleteBackground}
+            onUpload={onUploadBackground}
+            uploading={uploadingBackground}
+            t={t}
+          />
+          {errors.background_id && <div className="form-error">{errors.background_id}</div>}
+        </div>
+      )}
 
       {/* ── Voice (read-only) ── */}
       <div className="form-group">
@@ -139,10 +142,22 @@ export function CreateJobForm({
 
       <div className="form-group">
         <label className="form-label">{t.form.outputType}</label>
-        <select className="form-select" value={fields.output_type} disabled>
-          <option value="clean_video">CleanVideo (V1)</option>
-        </select>
-        <div className="form-hint">{t.form.outputTypeHint}</div>
+        <div className="output-type-toggle">
+          <button
+            type="button"
+            className={`output-type-btn${fields.output_type === 'clean_video' ? ' active' : ''}`}
+            onClick={() => set('output_type', 'clean_video')}
+          >
+            {t.form.outputTypeVideo}
+          </button>
+          <button
+            type="button"
+            className={`output-type-btn${fields.output_type === 'voice_only' ? ' active' : ''}`}
+            onClick={() => set('output_type', 'voice_only')}
+          >
+            {t.form.outputTypeVoice}
+          </button>
+        </div>
       </div>
 
       <div className="form-group">

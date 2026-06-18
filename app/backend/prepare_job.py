@@ -55,12 +55,15 @@ def fail_job(job_path: Path | None, msg: str) -> None:
 
 
 def validate_job(job: dict, job_id: str) -> None:
-    required = ["job_id", "title", "subtitle", "keywords", "script",
-                "background_id", "voice_id", "output_type"]
+    required = ["job_id", "title", "subtitle", "keywords", "script", "voice_id", "output_type"]
     for field in required:
         v = job.get(field)
         if v is None or v == "" or v == []:
             raise ValueError(f"Required field missing or empty: {field}")
+
+    # background_id only required for clean_video
+    if job.get("output_type") == "clean_video" and not job.get("background_id"):
+        raise ValueError("Required field missing or empty: background_id")
 
     if job["job_id"] != job_id:
         raise ValueError(
@@ -73,10 +76,10 @@ def validate_job(job: dict, job_id: str) -> None:
             f"Job status is '{status}'. Only pending/failed/cancelled jobs can be prepared."
         )
 
-    if job["output_type"] != "clean_video":
+    if job["output_type"] not in ("clean_video", "voice_only"):
         raise ValueError(
             f"output_type '{job['output_type']}' is not supported. "
-            f"final_video is not implemented in V1."
+            f"Must be 'clean_video' or 'voice_only'."
         )
 
     if job["voice_id"] != "boss_voxcpm2_lora":
@@ -175,8 +178,9 @@ def clean_old_outputs() -> None:
             print(f"[INFO] Removed old output dir: {name}")
 
 
-def build_paths(job_id: str) -> dict:
+def build_paths(job_id: str, output_type: str = "clean_video") -> dict:
     job_dir = JOBS_DIR / job_id
+    is_voice = output_type == "voice_only"
     return {
         "job_dir": str(job_dir),
         "input_dir": str(job_dir / "input"),
@@ -188,10 +192,14 @@ def build_paths(job_id: str) -> dict:
         "script_txt": str(job_dir / "input/script.txt"),
         "voice_wav": str(job_dir / "output/voice.wav"),
         "voice_for_latentsync_wav": str(job_dir / "output/voice_for_latentsync.wav"),
-        "clean_video": str(job_dir / "output/clean_video.mp4"),
+        "clean_video": None if is_voice else str(job_dir / "output/clean_video.mp4"),
         "final_video": None,
         "run_log": str(job_dir / "logs/run.log"),
-        "windows_desktop_output": f"{WINDOWS_DESKTOP}\\{job_id}_clean_video.mp4",
+        "windows_desktop_output": (
+            f"{WINDOWS_DESKTOP}\\{job_id}_voice.wav"
+            if is_voice else
+            f"{WINDOWS_DESKTOP}\\{job_id}_clean_video.mp4"
+        ),
     }
 
 
@@ -232,15 +240,19 @@ def main() -> None:
     print(f"[INFO]   output_type  : {job['output_type']}")
     print(f"[INFO]   keywords     : {job['keywords']}")
 
-    # --- Resolve background ---
-    try:
-        bg_src = resolve_background(job["background_id"])
-    except (FileNotFoundError, ValueError) as e:
-        fail_job(job_path, str(e))
-
-    print(f"[INFO] Background resolved: {bg_src}")
-
+    output_type = job["output_type"]
     stamp = now_stamp()
+
+    # --- Resolve + switch background (clean_video only) ---
+    if output_type == "clean_video":
+        try:
+            bg_src = resolve_background(job["background_id"])
+        except (FileNotFoundError, ValueError) as e:
+            fail_job(job_path, str(e))
+        print(f"[INFO] Background resolved: {bg_src}")
+    else:
+        bg_src = None
+        print(f"[INFO] voice_only — skipping background switch")
 
     # --- Create job directory structure ---
     job_dir = JOBS_DIR / job_id
@@ -262,12 +274,12 @@ def main() -> None:
     except Exception as e:
         fail_job(job_path, f"Failed to write input files: {e}")
 
-    # --- Switch background ---
-    print(f"[INFO] Switching background to: {job['background_id']}")
-    try:
-        switch_background(job["background_id"], job_id, bg_src, stamp)
-    except Exception as e:
-        fail_job(job_path, f"Failed to switch background: {e}")
+    if output_type == "clean_video":
+        print(f"[INFO] Switching background to: {job['background_id']}")
+        try:
+            switch_background(job["background_id"], job_id, bg_src, stamp)
+        except Exception as e:
+            fail_job(job_path, f"Failed to switch background: {e}")
 
     # --- Clean old outputs ---
     print(f"[INFO] Cleaning old DigitalHumanOutput/ files...")
@@ -289,7 +301,7 @@ def main() -> None:
         job["progress"]["total_windows"] = 0
         job["progress"]["percent"] = 0
         job["progress"]["message"] = "Job prepared successfully"
-        job["paths"] = build_paths(job_id)
+        job["paths"] = build_paths(job_id, output_type)
         save_json(job_path, job)
     except Exception as e:
         fail_job(job_path, f"Failed to update job.json: {e}")

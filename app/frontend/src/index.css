@@ -841,6 +841,23 @@ body {
   background: var(--accent-red-muted);
 }
 
+/* ---------------------------------------------------------------- OUTPUT TYPE TOGGLE */
+.output-type-toggle { display: flex; gap: 0.5rem; }
+.output-type-btn {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  background: var(--light-bg);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.output-type-btn:hover { border-color: var(--navy); color: var(--navy); }
+.output-type-btn.active { border-color: var(--navy); background: var(--navy); color: #fff; }
+
 /* ---------------------------------------------------------------- VOICE DISPLAY */
 .form-voice-display {
   background: var(--light-bg);

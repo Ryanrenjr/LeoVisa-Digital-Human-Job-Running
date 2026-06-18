@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""
+collect_voice_output.py — Voice-only job output collector
+Usage: python collect_voice_output.py JOB_ID
+"""
+
+import json
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+AI_WORKSPACE    = Path("/home/ryanrenjr/AI-Workspace")
+OUTPUT_DIR      = AI_WORKSPACE / "DigitalHumanOutput"
+JOBS_DIR        = AI_WORKSPACE / "jobs"
+WINDOWS_DESKTOP = Path("/mnt/c/Users/rjxxx/Desktop/DigitalHumanOutput")
+
+
+def now_iso():
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def load_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_json(path, data):
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def fail_job(job_path, msg):
+    print(f"[ERROR] {msg}", file=sys.stderr)
+    if job_path and job_path.exists():
+        try:
+            job = load_json(job_path)
+            job["status"] = "failed"
+            job["error_message"] = msg
+            job.setdefault("progress", {})
+            job["progress"]["stage"]   = "failed"
+            job["progress"]["message"] = msg
+            save_json(job_path, job)
+        except Exception as e:
+            print(f"[WARN] Could not update job.json: {e}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python collect_voice_output.py JOB_ID", file=sys.stderr)
+        sys.exit(1)
+
+    job_id   = sys.argv[1]
+    job_path = JOBS_DIR / job_id / "job.json"
+
+    print(f"[INFO] collect_voice_output.py — job={job_id}")
+
+    if not job_path.exists():
+        fail_job(None, f"job.json not found: {job_path}")
+
+    try:
+        job = load_json(job_path)
+    except Exception as e:
+        fail_job(None, f"Failed to parse job.json: {e}")
+
+    voice_src = OUTPUT_DIR / "voice.wav"
+    if not voice_src.exists():
+        fail_job(job_path, f"voice.wav not found: {voice_src}")
+
+    job_output_dir = JOBS_DIR / job_id / "output"
+    job_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy voice files to job output
+    for name in ("voice.wav", "voice_for_latentsync.wav"):
+        src = OUTPUT_DIR / name
+        if src.exists():
+            shutil.copy2(src, job_output_dir / name)
+            print(f"[INFO] Copied {name} -> job output/")
+        else:
+            print(f"[WARN] {name} not found, skipping")
+
+    # Copy voice.wav to Windows Desktop
+    win_dst = None
+    try:
+        WINDOWS_DESKTOP.mkdir(parents=True, exist_ok=True)
+        win_dst = WINDOWS_DESKTOP / f"{job_id}_voice.wav"
+        shutil.copy2(voice_src, win_dst)
+        print(f"[INFO] Copied to Windows Desktop: {win_dst}")
+    except Exception as e:
+        print(f"[WARN] Could not copy to Windows Desktop: {e}")
+        win_dst = None
+
+    # Update job.json
+    try:
+        job["status"]        = "finished"
+        job["finished_at"]   = now_iso()
+        job["error_message"] = None
+
+        progress = job.setdefault("progress", {})
+        progress["stage"]   = "finished"
+        progress["percent"] = 100
+        progress["message"] = "Voice generated successfully"
+
+        paths = job.setdefault("paths", {})
+        paths["voice_wav"] = str(job_output_dir / "voice.wav")
+        paths["voice_for_latentsync_wav"] = str(job_output_dir / "voice_for_latentsync.wav")
+        paths["clean_video"] = None
+        if win_dst:
+            paths["windows_desktop_output"] = str(win_dst)
+
+        save_json(job_path, job)
+        print(f"[INFO] job.json updated: status=finished")
+    except Exception as e:
+        fail_job(job_path, f"Failed to update job.json: {e}")
+
+    print(f"[INFO] Voice-only collection done: {job_id}")
+
+
+if __name__ == "__main__":
+    main()
